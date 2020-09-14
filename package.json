@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "start": "nodemon index.js"
+  },
+  "dependencies": {
+    "nodemon": "^2.0.4",
+    "open-simplex-noise": "^2.4.0-pre4",
+    "perlin-noise-3d": "^0.5.4",
+    "pngjs": "^5.0.0",
+    "simplex-noise": "^2.4.0"
+  }
+}
