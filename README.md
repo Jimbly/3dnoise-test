@@ -2,7 +2,7 @@
 ==============
 
 Test Information
-* Sorted by performance (fastest first)
+* Sorted roughly by performance (fastest first)
 * Timing and bottom histogram is for sampling 1 million completely random points
 * 4 images and top histogram are looking at 4 fixed planar slices (2 axis-aligned, 2 not)
 
