@@ -111,7 +111,7 @@ function testNoiseGenerator(name, gen, mul, add) {
   // Generate a test image for verification
   let w = 512;
   let h = 512;
-  let stride = w * 3;
+  let stride = w * 2.5;
   let pt = new Float32Array(3);
   let png = new PNG({ width: stride, height: h*2, colorType: 6 });
   for (let idx=0; idx < png.data.length;) {
