@@ -1,10 +1,12 @@
 3D Noise Tests
 ==============
 
-Results
+Test Information
+* Sorted by performance (fastest first)
 * Timing and bottom histogram is for sampling 1 million completely random points
 * 4 images and top histogram are looking at 4 fixed planar slices (2 axis-aligned, 2 not)
 
+Test Results
 * simplex-noise-2d: 99.4ms
   * output: not valid, just for comparison
 ![simplex-noise-2d](output/simplex-noise-2d.png)
