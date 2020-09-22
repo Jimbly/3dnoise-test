@@ -1,6 +1,7 @@
+const assert = require('assert');
 const { createCubic3D } = require('./cubic3d.js');
 const fs = require('fs');
-const { sqrt } = Math;
+const { floor, max, min, sqrt } = Math;
 const PerlinNoise3d = require('perlin-noise-3d');
 const { createPerlin3DDirect } = require('./perlin3d_no_lookup.js');
 const { PNG } = require('pngjs');
@@ -10,6 +11,13 @@ const { makeNoise3D } = require('open-simplex-noise');
 
 const NUM_POINTS = 1000000;
 
+function warpedGen(gen, scale) {
+  return function (x, y, z) {
+    return gen(x * scale, y * scale, z * scale);
+  };
+}
+
+
 function timeStart(msg) {
   process.stdout.write(`${msg}...`);
   return process.hrtime.bigint();
@@ -17,7 +25,7 @@ function timeStart(msg) {
 function timeEnd(start) {
   let t = process.hrtime.bigint() - start;
   let ms = Number(t / 1000n) / 1000;
-  console.log(` ${ms.toFixed(1)}ms`);
+  process.stdout.write(` ${ms.toFixed(1)}ms`);
 }
 
 let test_points;
@@ -70,20 +78,49 @@ let planes = [
   },
 ];
 
+function map(v) {
+  return max(0, min(255, floor(v * 255)));
+}
+
 function testNoiseGenerator(name, gen, mul, add) {
   let start = timeStart(name);
+  // Time it
   let r = 0;
   for (let ii = 0; ii < NUM_POINTS; ++ii) {
     let pt = test_points[ii];
-    r += gen(pt[0], pt[1], pt[2]) * mul + add;
+    let v = gen(pt[0], pt[1], pt[2]) * mul + add;
+    r += v;
   }
+  // console.log(`${name} range=${minv} - ${maxv}`);
   timeEnd(start);
+
+  // Gather statistics
+  let minv = Infinity;
+  let maxv = -Infinity;
+  let histo1 = new Uint32Array(256);
+  for (let ii = 0; ii < NUM_POINTS; ++ii) {
+    let pt = test_points[ii];
+    let v = gen(pt[0], pt[1], pt[2]) * mul + add;
+    minv = min(minv, v);
+    maxv = max(maxv, v);
+    v = map(v);
+    histo1[v]++;
+  }
+  console.log(`  ${minv.toFixed(3)}-${maxv.toFixed(3)}, avg=${(r/NUM_POINTS).toFixed(3)}`);
+
   // Generate a test image for verification
   let w = 512;
   let h = 512;
-  let stride = w * 2;
+  let stride = w * 3;
   let pt = new Float32Array(3);
   let png = new PNG({ width: stride, height: h*2, colorType: 6 });
+  for (let idx=0; idx < png.data.length;) {
+    png.data[idx++] = 0;
+    png.data[idx++] = 0;
+    png.data[idx++] = 0;
+    png.data[idx++] = 255;
+  }
+  let histo2 = new Uint32Array(256);
   for (let ii = 0; ii < planes.length; ++ii) {
     let plane = planes[ii];
     let buf_idx0 = ((ii & 1) * w + (ii & 2)/2 * h * stride) * 4;
@@ -94,14 +131,39 @@ function testNoiseGenerator(name, gen, mul, add) {
         pt[0] = p0[0] + tan[0] * xx/w*size + bitan[0] * yy/w*size;
         pt[1] = p0[1] + tan[1] * xx/w*size + bitan[1] * yy/w*size;
         pt[2] = p0[2] + tan[2] * xx/w*size + bitan[2] * yy/w*size;
-        let v = gen(pt[0], pt[1], pt[2]) * mul + add;
-        png.data[idx++] = v * 255;
-        png.data[idx++] = v * 255;
-        png.data[idx++] = v * 255;
+        let v = map(gen(pt[0], pt[1], pt[2]) * mul + add);
+        histo2[v]++;
+        png.data[idx++] = v;
+        png.data[idx++] = v;
+        png.data[idx++] = v;
         png.data[idx++] = 255;
       }
     }
   }
+  function graphHisto(histo, x, y) {
+    let mx = 0;
+    for (let ii = 0; ii < histo.length; ++ii) {
+      mx = max(mx, histo[ii]);
+    }
+    assert(mx);
+    for (let ii = 0; ii < histo.length; ++ii) {
+      let v = histo[ii] / mx * h;
+      for (let jj = 0; jj < v; ++jj) {
+        let idx = (x + ii + (y + h - jj - 1) * stride) * 4;
+        png.data[idx++] = 255;
+        png.data[idx++] = 255;
+        png.data[idx++] = 255;
+        png.data[idx++] = 255;
+      }
+    }
+    let mididx = (x + histo.length / 2 + y * stride) * 4;
+    for (let ii = 0; ii < h; ii += 4) {
+      png.data[mididx + ii * stride * 4] = 255;
+      png.data[mididx + ii * stride * 4 + 1] = 0;
+    }
+  }
+  graphHisto(histo2, w * 2, 0);
+  graphHisto(histo1, w * 2, h);
   let buffer = PNG.sync.write(png);
   fs.writeFileSync(`output/${name}.png`, buffer);
   return r;
@@ -109,6 +171,7 @@ function testNoiseGenerator(name, gen, mul, add) {
 
 function doTests() {
   // 3D covered under patent
+  // 256x256x256 of randomness
   let sn = new SimplexNoise('test');
   testNoiseGenerator('simplex-noise-3d', sn.noise3D.bind(sn), 0.5, 0.5);
   testNoiseGenerator('simplex-noise-2d', sn.noise2D.bind(sn), 0.5, 0.5);
@@ -118,13 +181,17 @@ function doTests() {
   pn.noiseSeed(12345);
   testNoiseGenerator('perlin-noise-3d', pn.get.bind(pn), 2, 0);
   // Pretty reasonable, but heavy directional artifacts
+  // Never repeats
   let pnnl = createPerlin3DDirect(12345);
   testNoiseGenerator('perlin3d-no-lookup', pnnl, 1, 0);
   // Looks good
+  // 256x256x256 of randomness
   let os = makeNoise3D(12345);
   testNoiseGenerator('open-simplex-noise-3d', os, 0.5, 0.5);
-  // Way too slow, looks the same as open-simplex-noise-3d
+  //testNoiseGenerator('open-simplex-noise-3d-scaled', os, 0.58, 0.5);
+  testNoiseGenerator('open-simplex-noise-3d-scaled-warped', warpedGen(os, 2), 0.58, 0.5);
+  // Way too slow, looks similar to open-simplex-noise-3d
   let c3d = createCubic3D(12345);
-  testNoiseGenerator('cubic-3d', c3d, 1, 1);
+  testNoiseGenerator('cubic-3d', c3d, 1, 0);
 }
 doTests();
