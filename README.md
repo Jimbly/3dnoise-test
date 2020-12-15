@@ -5,6 +5,7 @@ Test Information
 * Sorted roughly by performance (fastest first)
 * Timing and bottom histogram is for sampling 1 million completely random points
 * 4 images and top histogram are looking at 4 fixed planar slices (2 axis-aligned, 2 not)
+* Other 4 histograms are a test of mapping the (normal distribution) noise to a uniform distribution
 
 Test Results
 * simplex-noise-2d: 99.4ms

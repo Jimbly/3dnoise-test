@@ -62,13 +62,13 @@ let planes = [
     p0: new Float32Array([0,0,0]),
     tan: new Float32Array([1,0,0]),
     bitan: new Float32Array([0,1,0]),
-    size: 64,
+    size: 65, // get distribution artifacts if using 64, with some generators
   },
   {
     p0: new Float32Array([0,0,0]),
     tan: new Float32Array([0,0,1]),
     bitan: new Float32Array([0,1,0]),
-    size: 64,
+    size: 65,
   },
   {
     p0: new Float32Array([65, 41, 32]),
@@ -79,7 +79,48 @@ let planes = [
 ];
 
 function map(v) {
-  return max(0, min(255, floor(v * 255)));
+  return max(0, min(255, floor(v * 256)));
+}
+
+function map2(v, len) {
+  return max(0, min(len - 1, floor(v * len)));
+}
+
+let uniform_map;
+const SEGMENTS = 16;
+function uniformTrain(gen, mul, add) {
+  let values = [0.001];
+  for (let ii = 1; ii < SEGMENTS; ++ii) {
+    values.push(ii / SEGMENTS);
+  }
+  values.push(0.999);
+  assert.equal(values.length, SEGMENTS + 1);
+
+  let histo = new Uint32Array(SEGMENTS);
+  for (let ii = 0; ii < NUM_POINTS; ++ii) {
+    let pt = test_points[ii];
+    let v = gen(pt[0], pt[1], pt[2]) * mul + add;
+    let idx2 = map2(v, histo.length);
+    histo[idx2]++;
+  }
+
+  let tot = 0;
+  uniform_map = new Float32Array(SEGMENTS + 1);
+  for (let ii = 0; ii < histo.length; ++ii) {
+    tot += histo[ii];
+    uniform_map[ii+1] = tot / NUM_POINTS;
+  }
+  // console.log(uniform_map);
+}
+
+function uniformNoise(v) {
+  v = max(0, v * SEGMENTS);
+  if (v >= SEGMENTS) {
+    return 1;
+  }
+  let idx = floor(v);
+  let offs = v - idx;
+  return max(0, min(1, uniform_map[idx] + (uniform_map[idx+1] - uniform_map[idx]) * offs));
 }
 
 function testNoiseGenerator(name, gen, mul, add) {
@@ -103,15 +144,16 @@ function testNoiseGenerator(name, gen, mul, add) {
     let v = gen(pt[0], pt[1], pt[2]) * mul + add;
     minv = min(minv, v);
     maxv = max(maxv, v);
-    v = map(v);
-    histo1[v]++;
+    histo1[map2(v, histo1.length)]++;
   }
   console.log(`  ${minv.toFixed(3)}-${maxv.toFixed(3)}, avg=${(r/NUM_POINTS).toFixed(3)}`);
+
+  uniformTrain(gen, mul, add);
 
   // Generate a test image for verification
   let w = 512;
   let h = 512;
-  let stride = w * 2.5;
+  let stride = w * 3.5;
   let pt = new Float32Array(3);
   let png = new PNG({ width: stride, height: h*2, colorType: 6 });
   for (let idx=0; idx < png.data.length;) {
@@ -121,7 +163,11 @@ function testNoiseGenerator(name, gen, mul, add) {
     png.data[idx++] = 255;
   }
   let histo2 = new Uint32Array(256);
+  let hist_uniform = [];
+  const histou_size = 32;
   for (let ii = 0; ii < planes.length; ++ii) {
+    let histou = new Uint32Array(histou_size);
+    hist_uniform.push(histou);
     let plane = planes[ii];
     let buf_idx0 = ((ii & 1) * w + (ii & 2)/2 * h * stride) * 4;
     let { p0, tan, bitan, size } = plane;
@@ -131,16 +177,19 @@ function testNoiseGenerator(name, gen, mul, add) {
         pt[0] = p0[0] + tan[0] * xx/w*size + bitan[0] * yy/w*size;
         pt[1] = p0[1] + tan[1] * xx/w*size + bitan[1] * yy/w*size;
         pt[2] = p0[2] + tan[2] * xx/w*size + bitan[2] * yy/w*size;
-        let v = map(gen(pt[0], pt[1], pt[2]) * mul + add);
-        histo2[v]++;
+        let raw = gen(pt[0], pt[1], pt[2]) * mul + add;
+        let v = map(raw);
+        histo2[map2(raw, histo2.length)]++;
         png.data[idx++] = v;
         png.data[idx++] = v;
         png.data[idx++] = v;
         png.data[idx++] = 255;
+        histou[map2(uniformNoise(raw), histou.length)]++;
       }
     }
   }
-  function graphHisto(histo, x, y) {
+  function graphHisto(histo, x, y, bar_w) {
+    bar_w = bar_w || 1;
     let mx = 0;
     for (let ii = 0; ii < histo.length; ++ii) {
       mx = max(mx, histo[ii]);
@@ -148,22 +197,35 @@ function testNoiseGenerator(name, gen, mul, add) {
     assert(mx);
     for (let ii = 0; ii < histo.length; ++ii) {
       let v = histo[ii] / mx * h;
-      for (let jj = 0; jj < v; ++jj) {
-        let idx = (x + ii + (y + h - jj - 1) * stride) * 4;
-        png.data[idx++] = 255;
-        png.data[idx++] = 255;
-        png.data[idx++] = 255;
-        png.data[idx++] = 255;
+      for (let kk = 0; kk < bar_w; ++kk) {
+        for (let jj = 0; jj < v; ++jj) {
+          let idx = (x + ii * bar_w + kk + (y + h - jj - 1) * stride) * 4;
+          png.data[idx++] = 255;
+          png.data[idx++] = 255;
+          png.data[idx++] = 255;
+          png.data[idx++] = 255;
+        }
       }
     }
-    let mididx = (x + histo.length / 2 + y * stride) * 4;
+    let mididx = floor((x + (histo.length + 1) / 2 * bar_w + y * stride)) * 4;
     for (let ii = 0; ii < h; ii += 4) {
       png.data[mididx + ii * stride * 4] = 255;
       png.data[mididx + ii * stride * 4 + 1] = 0;
     }
+    let leftidx = (x + y * stride) * 4;
+    for (let ii = 0; ii < h; ii += 4) {
+      png.data[leftidx + ii * stride * 4] = 0;
+      png.data[leftidx + ii * stride * 4 + 2] = 255;
+    }
   }
   graphHisto(histo2, w * 2, 0);
   graphHisto(histo1, w * 2, h);
+  let histou_bar_w = floor(256 / histou_size);
+  graphHisto(hist_uniform[0], w * 2.5, 0, histou_bar_w);
+  graphHisto(hist_uniform[1], w * 3, 0, histou_bar_w);
+  graphHisto(hist_uniform[2], w * 2.5, h, histou_bar_w);
+  graphHisto(hist_uniform[3], w * 3, h, histou_bar_w);
+
   let buffer = PNG.sync.write(png);
   fs.writeFileSync(`output/${name}.png`, buffer);
   return r;
